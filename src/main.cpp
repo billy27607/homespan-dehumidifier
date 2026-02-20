@@ -117,7 +117,7 @@ void setup()
 	Serial.begin(115200);
 
 	homeSpan.enableOTA();
-	homeSpan.begin(Category::Humidifiers, "HomeSpan Humidifier");
+	homeSpan.begin(Category::Humidifiers, "HomeSpan Dehumidifier");
 
 	String mac = WiFi.macAddress();
 
