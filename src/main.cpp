@@ -47,30 +47,38 @@ struct HumidifierDehumidifier : Service::HumidifierDehumidifier
 
 	void loop() override
 	{
-		//  if the current state has not been update in the last 5 seconds we want to get fresh data from
+		//  if the current state has not been updated in the last 5 seconds we want to get fresh data from
 		//  the dehumidifier
 		if (currentState.timeVal() > 5000)
 		{
 			alorair.status();
-			if (alorair.currentStatus == true)
-				currentState.setVal(3);
-			else
-				currentState.setVal(1);
-		}
-
-		if (humidity.timeVal() > 5000 && fabs(humidity.getVal<float>() - alorair.currentHumidity) > 0.25)
-		{ // if it's been more than 5 seconds since last update, and humidity has changed
-			humidity.setVal(alorair.currentHumidity);
-		}
-
-		if (active.getVal() == 0)
-		{ // power is OFF
-			if (currentState.getVal() != 0)
-			{																// if current state is NOT Inactive
-				Serial.printf("Humidifier/DeHumidifier State: INACTIVE\n"); // set to Inactive
-				currentState.setVal(0);
+			if (!alorair.isConnected())
+			{
+				if (currentState.getVal() != 0)
+					currentState.setVal(0); // CAN unavailable — show inactive
+				return;
 			}
-			return; // return since there is nothing more to check when device if OFF
+
+			if (active.getVal() == 0)
+			{
+				if (currentState.getVal() != 0)
+				{
+					Serial.printf("Humidifier/DeHumidifier State: INACTIVE\n");
+					currentState.setVal(0);
+				}
+				return;
+			}
+
+			currentState.setVal(alorair.currentStatus ? 3 : 1);
+		}
+
+		if (!alorair.isConnected())
+			return;
+
+		if (humidity.timeVal() > 5000 && alorair.currentHumidity >= 0 && alorair.currentHumidity <= 100)
+		{
+			if (fabs(humidity.getVal<float>() - alorair.currentHumidity) > 0.25)
+				humidity.setVal(alorair.currentHumidity);
 		}
 	}
 };
@@ -86,9 +94,12 @@ struct TempSensor : Service::TemperatureSensor
 		temp->setRange(0, 110);
 	}
 
-	void loop() override 
+	void loop() override
 	{
-		temp->setVal(alorair.currentTemperature);
+		if (!alorair.isConnected() || temp->timeVal() < 5000)
+			return;
+		if (alorair.currentTemperature >= 0 && alorair.currentTemperature <= 110)
+			temp->setVal(alorair.currentTemperature);
 	}
 };
 
@@ -103,9 +114,12 @@ struct HumiditySensor : Service::HumiditySensor
 		humidity->setRange(0, 100);
 	}
 
-	void loop() override 
+	void loop() override
 	{
-		humidity->setVal(alorair.currentHumidity);
+		if (!alorair.isConnected() || humidity->timeVal() < 5000)
+			return;
+		if (alorair.currentHumidity >= 0 && alorair.currentHumidity <= 100)
+			humidity->setVal(alorair.currentHumidity);
 	}
 };
 
@@ -140,9 +154,9 @@ void setup()
 	 	{
 			LOG1("Can connected...");
 		}
-		else 
+		else
 		{
-			LOG1("Can connect failed...");			
+			LOG1("Can connect failed...");
 		}
 
 }
