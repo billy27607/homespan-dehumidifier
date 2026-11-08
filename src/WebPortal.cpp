@@ -501,8 +501,7 @@ static void handleUnpair()
 	if (!checkAuth())
 		return;
 	// HomeSpan's 'U' command: deletes all controller pairings and drops
-	// HomeKit connections, but keeps the Accessory ID (and so the
-	// HomeSpan-<ID>.local hostname used for the dashboard and OTA).
+	// HomeKit connections, but keeps the Accessory ID.
 	homeSpan.processSerialCommand("U");
 	WEBLOG("HomeKit pairing reset from dashboard");
 	dash->send(200, "text/plain", "Pairing removed. Delete the dehumidifier in the Home app, then add it again with the setup code.");

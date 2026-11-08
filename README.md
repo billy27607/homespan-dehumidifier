@@ -120,12 +120,12 @@ Join it from a phone and the setup page pops up (or browse to `http://192.168.4.
 Leave either one blank to keep the current value. The device saves everything and restarts. If nothing is saved within 5 minutes, the portal restarts the device so it retries the saved network.
 
 ### Dashboard
-On your home network, browse to `http://<device-ip>:8080/` and log in as `admin` with `DASHBOARD_PASSWORD` (HomeKit already uses port 80). The dashboard shows:
+On your home network, browse to `http://dehumidifier-<mac>.local:8080/` (the MAC is 12 hex digits, lowercase, with no separators) or `http://<device-ip>:8080/` and log in as `admin` with `DASHBOARD_PASSWORD` (HomeKit already uses port 80). The dashboard shows:
 - CAN link, humidity, target, temperature and run state (refreshed every 2 seconds, `CAN_POLL_MS`)
 - pump state, with a **Pump out water** button to empty the condensate
 - Wi-Fi network, signal, IP address, uptime, free memory and firmware version
-- HomeKit pairing status, with a **Reset HomeKit pairing** button. It removes all pairings but keeps the device ID (and so its `HomeSpan-<ID>.local` name). Afterwards, delete the dehumidifier in the Home app and add it again.
-- **Factory reset** button: erases all saved data (Wi-Fi, HomeKit pairing and setup code, admin password, saved settings) and restarts into the setup network. The device gets a new HomeKit ID, so its `HomeSpan-<ID>.local` name changes. The OTA password is set from `OTA_PASSWORD` in `secrets.h` on every boot, so OTA keeps working.
+- HomeKit pairing status, with a **Reset HomeKit pairing** button. It removes all pairings but keeps the device's HomeKit ID. Afterwards, delete the dehumidifier in the Home app and add it again.
+- **Factory reset** button: erases all saved data (Wi-Fi, HomeKit pairing and setup code, admin password, saved settings) and restarts into the setup network. The device gets a new HomeKit ID, so the Home app sees it as a new accessory. Its network name is built from the MAC address and doesn't change. The OTA password is set from `OTA_PASSWORD` in `secrets.h` on every boot, so OTA keeps working.
 
 The dashboard uses HTTP basic auth over plain HTTP, so keep it on a trusted LAN.
 

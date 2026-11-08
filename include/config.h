@@ -11,6 +11,10 @@
 // ---- Firmware ----------------------------------------------------------------
 #define FW_VERSION "0.10.0"
 
+// ---- Network name -----------------------------------------------------------
+// mDNS hostname is HOSTNAME_BASE-<12-digit MAC>.local, e.g. dehumidifier-a1b2c3d4e5f6.local
+#define HOSTNAME_BASE "dehumidifier"
+
 // ---- Dehumidifier polling ---------------------------------------------------
 // How often to read status over CAN. The dashboard refreshes at the same rate.
 #define CAN_POLL_MS 2000

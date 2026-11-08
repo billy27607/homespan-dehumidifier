@@ -7,6 +7,7 @@
 */
 #include <AlorairHDi65.h>
 #include "HomeSpan.h"
+#include <esp_mac.h>
 #include "config.h"
 #include "WebPortal.h"
 
@@ -137,9 +138,16 @@ void setup()
 	homeSpan.enableOTA(); // password stored in NVS (serial 'O' command)
 #endif
 	webPortalInit(); // captive-portal Wi-Fi setup + dashboard on DASHBOARD_PORT
-	homeSpan.begin(Category::Humidifiers, "HomeSpan Dehumidifier");
+	// Hostname "dehumidifier-<mac>.local", from the chip's factory MAC (eFuse),
+	// so it never changes, even after a factory reset gives HomeKit a new ID.
+	uint8_t mac[6];
+	esp_read_mac(mac, ESP_MAC_WIFI_STA);
+	static char hostSuffix[16];
+	snprintf(hostSuffix, sizeof(hostSuffix), "-%02x%02x%02x%02x%02x%02x",
+			 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	homeSpan.setHostNameSuffix(hostSuffix);
+	homeSpan.begin(Category::Humidifiers, "HomeSpan Dehumidifier", HOSTNAME_BASE);
 
-	String mac = WiFi.macAddress();
 
 	new SpanAccessory();
 	new Service::AccessoryInformation();
