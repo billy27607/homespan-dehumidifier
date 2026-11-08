@@ -20,6 +20,7 @@ This project provides a HomeKit bridge for the Alorair HDi65 dehumidifier, trans
 - ✅ **Humidity Monitoring**: Real-time humidity readings
 - ✅ **Temperature Monitoring**: Track current temperature
 - ✅ **Target Humidity**: Set desired humidity level (dehumidifier threshold)
+- ✅ **Web Dashboard**: Status and pump-out from a browser, captive-portal Wi-Fi setup
 - ✅ **OTA Updates**: Over-the-air firmware updates via HomeSpan
 - ✅ **Status Monitoring**: Track active/inactive and operating states
 - ✅ **Persistent Settings**: All settings stored in non-volatile storage (NVS)
@@ -93,6 +94,34 @@ The dehumidifier communicates via CAN bus on pin **D7**. Ensure proper CAN bus w
 - **CAN_H**: Connect to dehumidifier CAN_H
 - **CAN_L**: Connect to dehumidifier CAN_L
 - **GND**: Common ground
+
+## Web Interface
+
+Settings live in `include/config.h`. Passwords live in gitignored files that you create from the example templates:
+
+```sh
+cp include/secrets.example.h include/secrets.h   # AP_PASSWORD, DASHBOARD_PASSWORD
+cp secrets.example.ini secrets.ini               # OTA upload password
+```
+
+The build stops with an error until `include/secrets.h` exists.
+
+### Wi-Fi setup (captive portal)
+The device starts its own access point, **`Dehumidifier-Setup`** (password: `AP_PASSWORD`), when:
+- no Wi-Fi credentials are stored (first boot),
+- the saved network can't be joined within 3 minutes of boot,
+- you press **Change Wi-Fi network** on the dashboard, or
+- you type `A` on the serial console.
+
+Join it from a phone and the setup page pops up (or browse to `http://192.168.4.1/`). Choose a network, enter its password, and the device saves it and restarts. If nothing is saved within 5 minutes, the portal restarts the device so it retries the saved network.
+
+### Dashboard
+On your home network, browse to `http://<device-ip>:8080/` and log in as `admin` with `DASHBOARD_PASSWORD` (HomeKit already uses port 80). The dashboard shows:
+- CAN link, humidity, target, temperature and run state (refreshed every 5 seconds)
+- pump state, with a **Pump out water** button to empty the condensate
+- Wi-Fi network, signal, IP address, uptime, free memory and firmware version
+
+The dashboard uses HTTP basic auth over plain HTTP, so keep it on a trusted LAN.
 
 ## Usage
 

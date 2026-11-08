@@ -7,6 +7,8 @@
 */
 #include <AlorairHDi65.h>
 #include "HomeSpan.h"
+#include "config.h"
+#include "WebPortal.h"
 
 // instantiate the HDi65
 
@@ -131,6 +133,7 @@ void setup()
 	Serial.begin(115200);
 
 	homeSpan.enableOTA();
+	webPortalInit(); // captive-portal Wi-Fi setup + dashboard on DASHBOARD_PORT
 	homeSpan.begin(Category::Humidifiers, "HomeSpan Dehumidifier");
 
 	String mac = WiFi.macAddress();
@@ -139,7 +142,7 @@ void setup()
 	new Service::AccessoryInformation();
 		new Characteristic::Identify();
 		new Characteristic::Name("AlorAirHDi65");
-		new Characteristic::FirmwareRevision("0.9.0");
+		new Characteristic::FirmwareRevision(FW_VERSION);
 		new Characteristic::Manufacturer("AlorAir");
 
 
@@ -166,6 +169,7 @@ void setup()
 void loop()
 {
 	homeSpan.poll();
+	webPortalLoop();
 }
 
 ////////////////////////////////////////////////////////////////////////
