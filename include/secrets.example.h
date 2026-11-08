@@ -8,3 +8,7 @@
 
 // Dashboard login password (the user name is in config.h)
 #define DASHBOARD_PASSWORD "change-me-dashboard"
+
+// OTA upload password: must match --auth in secrets.ini.
+// Set on every boot, so it survives a factory reset.
+#define OTA_PASSWORD "change-me-ota"

@@ -3,10 +3,34 @@
 
 #include <AlorairHDi65.h>
 #include <DNSServer.h>
+#include <Preferences.h>
 #include <WebServer.h>
 #include "HomeSpan.h"
 
 extern AlorairHDi65 alorair; // defined in main.cpp
+
+// The dashboard password set from the setup page is kept in NVS.
+// Until one is set, DASHBOARD_PASSWORD from secrets.h is used.
+// (Serial command 'E' erases NVS and restores the default.)
+#define PREFS_NAMESPACE "webportal"
+#define PREFS_DASH_PW "dashpw"
+static String dashPassword = DASHBOARD_PASSWORD;
+
+// Same rules HomeSpan enforces: exactly 8 digits, not a trivial pattern.
+static bool allowedSetupCode(const String &c)
+{
+	if (c.length() != 8)
+		return false;
+	bool allSame = true;
+	for (char ch : c)
+	{
+		if (!isdigit((unsigned char)ch))
+			return false;
+		if (ch != c[0])
+			allSame = false;
+	}
+	return !allSame && c != "12345678" && c != "87654321";
+}
 
 ////////////////////////////////////////////////////////////////////////
 // Shared helpers
@@ -67,6 +91,7 @@ h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mut
 .row:first-of-type{border-top:0}
 .row span:last-child{color:var(--muted);text-align:right;word-break:break-all;padding-left:12px}
 .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.8rem;font-weight:600;border:1px solid currentColor}
+button.bad{color:var(--bad)}
 .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.muted{color:var(--muted)}
 label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
 input{width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:1rem}
@@ -134,42 +159,98 @@ static void runCaptivePortal()
 
 	WebServer server(80);
 	bool saved = false;
-	String newSsid, newPwd;
+	String newSsid, newPwd, newDashPw, newCode;
 
-	server.on("/", HTTP_GET, [&]()
-			  {
-		String p = pageHead("Dehumidifier Wi-Fi Setup");
-		p += F("<h1>Dehumidifier Wi-Fi Setup</h1><div class=\"card\"><h2>Network</h2>"
-			   "<form method=\"POST\" action=\"/save\">"
+	// Renders the setup form. Passwords are never echoed back; on a validation
+	// error the SSID and setup code the user typed are kept.
+	auto renderForm = [&](const String &err, const String &ssidVal, const String &codeVal)
+	{
+		String p = pageHead("Dehumidifier Setup");
+		p += F("<h1>Dehumidifier Setup</h1>");
+		if (err.length())
+		{
+			p += F("<div class=\"card bad\">");
+			p += htmlEscape(err);
+			p += F("</div>");
+		}
+		p += F("<form method=\"POST\" action=\"/save\"><div class=\"card\"><h2>Wi-Fi network</h2>"
 			   "<label for=\"s\">Network name (SSID)</label>"
-			   "<input id=\"s\" name=\"ssid\" list=\"nets\" required maxlength=\"32\" autocomplete=\"off\" autocapitalize=\"none\">"
-			   "<datalist id=\"nets\">");
+			   "<input id=\"s\" name=\"ssid\" list=\"nets\" required maxlength=\"32\" autocomplete=\"off\" autocapitalize=\"none\" value=\"");
+		p += htmlEscape(ssidVal);
+		p += F("\"><datalist id=\"nets\">");
 		p += options;
 		p += F("</datalist>"
-			   "<label for=\"p\">Password</label>"
+			   "<label for=\"p\">Wi-Fi password</label>"
 			   "<input id=\"p\" name=\"pwd\" type=\"password\" maxlength=\"64\">"
+			   "<p class=\"msg muted\">Pick a network from the list or type a hidden one.</p></div>"
+
+			   "<div class=\"card\"><h2>Dashboard login</h2>"
+			   "<label for=\"d1\">New admin password</label>"
+			   "<input id=\"d1\" name=\"dashpw\" type=\"password\" minlength=\"8\" maxlength=\"64\" autocomplete=\"new-password\">"
+			   "<label for=\"d2\">Confirm admin password</label>"
+			   "<input id=\"d2\" name=\"dashpw2\" type=\"password\" maxlength=\"64\" autocomplete=\"new-password\">"
+			   "<p class=\"msg muted\">User name <b>" DASHBOARD_USER "</b>. At least 8 characters. Leave blank to keep the current password.</p></div>"
+
+			   "<div class=\"card\"><h2>HomeKit</h2>"
+			   "<label for=\"c\">Setup code</label>"
+			   "<input id=\"c\" name=\"code\" inputmode=\"numeric\" maxlength=\"10\" placeholder=\"123-45-678\" autocomplete=\"off\" value=\"");
+		p += htmlEscape(codeVal);
+		p += F("\"><p class=\"msg muted\">8 digits, used when adding the dehumidifier in the Home app. "
+			   "Leave blank to keep the current code. Changing it doesn't affect an existing pairing.</p></div>"
+
 			   "<button type=\"submit\">Save and restart</button></form>"
-			   "<p class=\"msg muted\">Pick a network from the list or type a hidden one. "
-			   "The device restarts and joins it. The dashboard is then at "
+			   "<p class=\"msg muted\">The device restarts and joins your network. The dashboard is then at "
 			   "<b>http://&lt;device-ip&gt;:");
 		p += String(DASHBOARD_PORT);
-		p += F("/</b>.</p></div></main></body></html>");
-		server.send(200, "text/html", p); });
+		p += F("/</b>.</p></main></body></html>");
+		return p;
+	};
+
+	server.on("/", HTTP_GET, [&]()
+			  { server.send(200, "text/html", renderForm("", "", "")); });
 
 	server.on("/save", HTTP_POST, [&]()
 			  {
-		newSsid = server.arg("ssid");
-		newPwd = server.arg("pwd");
-		newSsid.trim();
-		if (newSsid.isEmpty() || newSsid.length() > 32 || newPwd.length() > 64) {
-			server.sendHeader("Location", "/");
-			server.send(303);
+		String ssid = server.arg("ssid");
+		String pwd = server.arg("pwd");
+		String dashPw = server.arg("dashpw");
+		String dashPw2 = server.arg("dashpw2");
+		String code = server.arg("code");
+		ssid.trim();
+		code.replace("-", "");
+		code.replace(" ", "");
+
+		String err;
+		if (ssid.isEmpty() || ssid.length() > 32)
+			err = "Enter a Wi-Fi network name (up to 32 characters).";
+		else if (pwd.length() > 64)
+			err = "The Wi-Fi password can be at most 64 characters.";
+		else if (dashPw.length() && (dashPw.length() < 8 || dashPw.length() > 64))
+			err = "The admin password must be 8 to 64 characters.";
+		else if (dashPw != dashPw2)
+			err = "The admin passwords don't match.";
+		else if (code.length() && !allowedSetupCode(code))
+			err = "The setup code must be exactly 8 digits, and not a simple pattern like 12345678 or 11111111.";
+
+		if (err.length()) {
+			server.send(400, "text/html", renderForm(err, ssid, server.arg("code")));
 			return;
 		}
+
+		newSsid = ssid;
+		newPwd = pwd;
+		newDashPw = dashPw;
+		newCode = code;
+
 		String p = pageHead("Saved");
 		p += F("<h1>Saved</h1><div class=\"card\"><p>Joining <b>");
 		p += htmlEscape(newSsid);
-		p += F("</b>. You can close this page and rejoin your normal network.</p>"
+		p += F("</b>.</p>");
+		if (newDashPw.length())
+			p += F("<p>Admin password updated.</p>");
+		if (newCode.length())
+			p += "<p>HomeKit setup code set to <b>" + newCode.substring(0, 3) + "-" + newCode.substring(3, 5) + "-" + newCode.substring(5) + "</b>.</p>";
+		p += F("<p>You can close this page and rejoin your normal network.</p>"
 			   "<p class=\"muted\">If it can't connect, this setup network comes back after a few minutes.</p></div></main></body></html>");
 		server.send(200, "text/html", p);
 		saved = true; });
@@ -202,7 +283,18 @@ static void runCaptivePortal()
 			delay(2);
 		}
 		homeSpan.setWifiCredentials(newSsid.c_str(), newPwd.c_str());
-		LOG0("*** Wi-Fi credentials saved for \"%s\". Restarting...\n\n", newSsid.c_str());
+		LOG0("*** Wi-Fi credentials saved for \"%s\"\n", newSsid.c_str());
+		if (newDashPw.length())
+		{
+			Preferences prefs;
+			prefs.begin(PREFS_NAMESPACE, false);
+			prefs.putString(PREFS_DASH_PW, newDashPw);
+			prefs.end();
+			LOG0("*** Dashboard password updated\n");
+		}
+		if (newCode.length())
+			homeSpan.setPairingCode(newCode.c_str(), false); // stores new SRP verifier in NVS
+		LOG0("*** Restarting...\n\n");
 	}
 	else
 	{
@@ -248,6 +340,18 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(
   <button class="secondary" id="wifiBtn">Change Wi-Fi network…</button>
   <div class="msg" id="wifiMsg"></div>
 </div>
+<div class="card">
+  <h2>HomeKit</h2>
+  <div class="row"><span>Pairing</span><span id="paired">–</span></div>
+  <button class="secondary" id="unpairBtn">Reset HomeKit pairing…</button>
+  <div class="msg" id="unpairMsg"></div>
+</div>
+<div class="card">
+  <h2>Factory reset</h2>
+  <p class="msg muted">Erases Wi-Fi, HomeKit pairing and setup code, admin password and saved settings, then restarts into the "%AP_SSID%" setup network.</p>
+  <button class="secondary bad" id="resetBtn">Factory reset…</button>
+  <div class="msg" id="resetMsg"></div>
+</div>
 <p class="msg muted" id="updated"></p>
 <script>
 const $=id=>document.getElementById(id);
@@ -265,28 +369,57 @@ async function refresh(){
     $('tmp').textContent=ok?s.temperature+'°F':'–';
     $('state').textContent=!ok?'–':!s.power?'Off':s.running?'Drying':'Idle';
     $('pump').textContent=!ok?'–':s.pump?'Running':'Idle';
+    // Clear "Pump out started" once the pump has run and stopped again.
+    if(pumpWatch){if(ok&&s.pump)pumpSeen=true;else if(pumpSeen)clearPumpMsg();}
     $('ssid').textContent=s.ssid;
     $('rssi').textContent=s.rssi+' dBm';
     $('ip').textContent=s.ip;
     $('up').textContent=dur(s.uptime);
     $('heap').textContent=Math.round(s.heap/1024)+' KB';
     $('fw').textContent=s.fw;
+    $('paired').textContent=s.paired===null?'Unknown':s.paired?'Paired':'Not paired';
     $('updated').textContent='Updated '+new Date().toLocaleTimeString();
   }catch(e){pill($('conn'),'Offline','bad');$('updated').textContent='Can\'t reach the device';}
 }
 async function post(url){const r=await fetch(url,{method:'POST'});return{ok:r.ok,text:await r.text()};}
+let pumpWatch=false,pumpSeen=false,pumpTimer=0;
+function clearPumpMsg(){pumpWatch=pumpSeen=false;clearTimeout(pumpTimer);$('pumpMsg').textContent='';}
+function pumpMsg(text,cls,clearAfterMs){
+  clearTimeout(pumpTimer);$('pumpMsg').textContent=text;$('pumpMsg').className='msg '+cls;
+  if(clearAfterMs)pumpTimer=setTimeout(clearPumpMsg,clearAfterMs);
+}
 $('pumpBtn').onclick=async()=>{
-  const b=$('pumpBtn');b.disabled=true;$('pumpMsg').textContent='Sending…';$('pumpMsg').className='msg muted';
-  try{const r=await post('/api/pumpout');$('pumpMsg').textContent=r.text;$('pumpMsg').className='msg '+(r.ok?'ok':'bad');}
-  catch(e){$('pumpMsg').textContent='Request failed';$('pumpMsg').className='msg bad';}
+  const b=$('pumpBtn');b.disabled=true;pumpWatch=pumpSeen=false;pumpMsg('Sending…','muted');
+  try{
+    const r=await post('/api/pumpout');
+    // On success, wait for the pump to run and stop (see refresh); give up after 2 min
+    // in case the pump never reports running. Errors clear after 10 s.
+    if(r.ok){pumpWatch=true;pumpMsg(r.text,'ok',120000);}else pumpMsg(r.text,'bad',10000);
+  }catch(e){pumpMsg('Request failed','bad',10000);}
   setTimeout(()=>b.disabled=false,3000);setTimeout(refresh,1500);
+};
+$('unpairBtn').onclick=async()=>{
+  if(!confirm('Remove all HomeKit pairings? The dehumidifier stops responding in the Home app until you delete it there and add it again.'))return;
+  const m=$('unpairMsg');m.textContent='Resetting…';m.className='msg muted';
+  try{const r=await post('/api/homekit-unpair');m.textContent=r.text;m.className='msg '+(r.ok?'warn':'bad');}
+  catch(e){m.textContent='Request failed';m.className='msg bad';}
+  refresh();
+};
+$('resetBtn').onclick=async()=>{
+  if(!confirm('Factory reset? This erases ALL settings: Wi-Fi, HomeKit pairing and setup code, and the admin password. The device restarts into the "%AP_SSID%" setup network and must be set up again.'))return;
+  try{await post('/api/factory-reset');}catch(e){}
+  $('resetMsg').textContent='Resetting. Join "%AP_SSID%" from your phone to set it up again, and delete the dehumidifier from the Home app.';
+  $('resetMsg').className='msg warn';
 };
 $('wifiBtn').onclick=async()=>{
   if(!confirm('The device will leave this network and start the "%AP_SSID%" setup network. HomeKit will be offline until you finish. Continue?'))return;
   try{await post('/api/wifi-setup');}catch(e){}
   $('wifiMsg').textContent='Setup network starting. Join "%AP_SSID%" from your phone.';$('wifiMsg').className='msg warn';
 };
-refresh();setInterval(refresh,5000);
+// Poll after each response (never overlapping); pause while the tab is hidden.
+async function tick(){if(!document.hidden)await refresh();setTimeout(tick,%POLL_MS%);}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+tick();
 </script>
 </main></body></html>
 )HTML";
@@ -294,11 +427,15 @@ refresh();setInterval(refresh,5000);
 static WebServer *dash = nullptr;
 static volatile bool wifiUp = false;
 static bool everConnected = false;
-static uint32_t wifiSetupAt = 0; // when set, launch the portal at this millis()
+static uint32_t wifiSetupAt = 0;    // when set, launch the portal at this millis()
+static uint32_t factoryResetAt = 0; // when set, factory reset at this millis()
+// HomeKit pairing: -1 unknown, 0 not paired, 1 paired. Updated by HomeSpan's
+// status callback, which fires on every Wi-Fi connect and pairing change.
+static volatile int8_t homekitPaired = -1;
 
 static bool checkAuth()
 {
-	if (dash->authenticate(DASHBOARD_USER, DASHBOARD_PASSWORD))
+	if (dash->authenticate(DASHBOARD_USER, dashPassword.c_str()))
 		return true;
 	dash->requestAuthentication(BASIC_AUTH, "Dehumidifier");
 	return false;
@@ -311,6 +448,7 @@ static void handleRoot()
 	String p = pageHead("Dehumidifier");
 	String body = FPSTR(DASHBOARD_HTML);
 	body.replace("%AP_SSID%", AP_SSID);
+	body.replace("%POLL_MS%", String(CAN_POLL_MS));
 	p += body;
 	dash->send(200, "text/html", p);
 }
@@ -319,19 +457,20 @@ static void handleStatus()
 {
 	if (!checkAuth())
 		return;
-	// Values are cached: the HomeKit service loop polls the CAN bus every 5s.
+	// Values are cached: pollDehumidifier() in main.cpp reads the CAN bus every CAN_POLL_MS.
 	char buf[512];
 	snprintf(buf, sizeof(buf),
 			 "{\"connected\":%s,\"power\":%s,\"running\":%s,\"pump\":%s,"
 			 "\"humidity\":%.0f,\"target\":%.0f,\"temperature\":%.0f,"
-			 "\"ssid\":\"%s\",\"rssi\":%d,\"ip\":\"%s\",\"uptime\":%lu,\"heap\":%u,\"fw\":\"%s\"}",
+			 "\"ssid\":\"%s\",\"rssi\":%d,\"ip\":\"%s\",\"uptime\":%lu,\"heap\":%u,\"fw\":\"%s\",\"paired\":%s}",
 			 alorair.isConnected() ? "true" : "false",
 			 alorair.powerState ? "true" : "false",
 			 alorair.currentStatus ? "true" : "false",
 			 alorair.pumpState ? "true" : "false",
 			 alorair.currentHumidity, alorair.targetHumidity, alorair.currentTemperature,
 			 jsonEscape(WiFi.SSID()).c_str(), WiFi.RSSI(), WiFi.localIP().toString().c_str(),
-			 (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(), FW_VERSION);
+			 (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(), FW_VERSION,
+			 homekitPaired > 0 ? "true" : homekitPaired == 0 ? "false" : "null");
 	dash->sendHeader("Cache-Control", "no-store");
 	dash->send(200, "application/json", buf);
 }
@@ -357,6 +496,28 @@ static void handlePumpOut()
 	}
 }
 
+static void handleUnpair()
+{
+	if (!checkAuth())
+		return;
+	// HomeSpan's 'U' command: deletes all controller pairings and drops
+	// HomeKit connections, but keeps the Accessory ID (and so the
+	// HomeSpan-<ID>.local hostname used for the dashboard and OTA).
+	homeSpan.processSerialCommand("U");
+	WEBLOG("HomeKit pairing reset from dashboard");
+	dash->send(200, "text/plain", "Pairing removed. Delete the dehumidifier in the Home app, then add it again with the setup code.");
+}
+
+static void handleFactoryReset()
+{
+	if (!checkAuth())
+		return;
+	dash->send(200, "text/plain", "Factory reset");
+	factoryResetAt = millis() + 1000; // give the response time to go out
+	if (factoryResetAt == 0)
+		factoryResetAt = 1;
+}
+
 static void handleWifiSetup()
 {
 	if (!checkAuth())
@@ -374,6 +535,8 @@ static void startDashboard()
 	dash->on("/api/status", HTTP_GET, handleStatus);
 	dash->on("/api/pumpout", HTTP_POST, handlePumpOut);
 	dash->on("/api/wifi-setup", HTTP_POST, handleWifiSetup);
+	dash->on("/api/homekit-unpair", HTTP_POST, handleUnpair);
+	dash->on("/api/factory-reset", HTTP_POST, handleFactoryReset);
 	dash->onNotFound([]()
 					 { dash->send(404, "text/plain", "Not found"); });
 	dash->begin();
@@ -386,11 +549,26 @@ static void startDashboard()
 
 void webPortalInit()
 {
+	Preferences prefs;
+	if (prefs.begin(PREFS_NAMESPACE, true)) // read-only; fails harmlessly if never written
+	{
+		String stored = prefs.getString(PREFS_DASH_PW, "");
+		if (stored.length())
+			dashPassword = stored;
+		prefs.end();
+	}
+
 	homeSpan.setApFunction(runCaptivePortal);
 	homeSpan.enableAutoStartAP();
 	// Called from the network event task: only set a flag here.
 	homeSpan.setConnectionCallback([](int)
 								   { wifiUp = true; });
+	homeSpan.setStatusCallback([](HS_STATUS status)
+							   {
+		if (status == HS_PAIRED)
+			homekitPaired = 1;
+		else if (status == HS_PAIRING_NEEDED)
+			homekitPaired = 0; });
 }
 
 void webPortalLoop()
@@ -412,6 +590,16 @@ void webPortalLoop()
 		if (dash)
 			dash->stop();
 		homeSpan.processSerialCommand("A");
+	}
+
+	// Factory reset: HomeSpan's 'E' erases all of NVS (Wi-Fi, pairing, setup
+	// code, characteristic values, OTA and dashboard passwords) and reboots.
+	if (factoryResetAt && (int32_t)(millis() - factoryResetAt) >= 0)
+	{
+		factoryResetAt = 0;
+		if (dash)
+			dash->stop();
+		homeSpan.processSerialCommand("E");
 	}
 
 	// Saved network never came up (moved house, new router, wrong password):

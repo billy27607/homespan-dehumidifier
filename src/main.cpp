@@ -49,11 +49,10 @@ struct HumidifierDehumidifier : Service::HumidifierDehumidifier
 
 	void loop() override
 	{
-		//  if the current state has not been updated in the last 5 seconds we want to get fresh data from
-		//  the dehumidifier
+		//  push state to HomeKit every 5 seconds, using the values that
+		//  pollDehumidifier() reads from the CAN bus
 		if (currentState.timeVal() > 5000)
 		{
-			alorair.status();
 			if (!alorair.isConnected())
 			{
 				if (currentState.getVal() != 0)
@@ -132,7 +131,11 @@ void setup()
 
 	Serial.begin(115200);
 
-	homeSpan.enableOTA();
+#ifdef OTA_PASSWORD
+	homeSpan.enableOTA(OTA_PASSWORD); // from secrets.h; survives factory reset
+#else
+	homeSpan.enableOTA(); // password stored in NVS (serial 'O' command)
+#endif
 	webPortalInit(); // captive-portal Wi-Fi setup + dashboard on DASHBOARD_PORT
 	homeSpan.begin(Category::Humidifiers, "HomeSpan Dehumidifier");
 
@@ -166,8 +169,22 @@ void setup()
 
 ////////////////////////////////////////////////////////////////////////
 
+// Read the dehumidifier's status over CAN on a fixed schedule. HomeKit and
+// the dashboard both use the cached values. A failed read blocks for up to
+// 400ms, so retry less often while the link is down.
+static void pollDehumidifier()
+{
+	static uint32_t lastPoll = 0;
+	uint32_t interval = alorair.isConnected() ? CAN_POLL_MS : CAN_RETRY_MS;
+	if (millis() - lastPoll < interval)
+		return;
+	lastPoll = millis();
+	alorair.status();
+}
+
 void loop()
 {
+	pollDehumidifier();
 	homeSpan.poll();
 	webPortalLoop();
 }

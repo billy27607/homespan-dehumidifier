@@ -100,7 +100,7 @@ The dehumidifier communicates via CAN bus on pin **D7**. Ensure proper CAN bus w
 Settings live in `include/config.h`. Passwords live in gitignored files that you create from the example templates:
 
 ```sh
-cp include/secrets.example.h include/secrets.h   # AP_PASSWORD, DASHBOARD_PASSWORD
+cp include/secrets.example.h include/secrets.h   # AP_PASSWORD, DASHBOARD_PASSWORD, OTA_PASSWORD
 cp secrets.example.ini secrets.ini               # OTA upload password
 ```
 
@@ -113,13 +113,19 @@ The device starts its own access point, **`Dehumidifier-Setup`** (password: `AP_
 - you press **Change Wi-Fi network** on the dashboard, or
 - you type `A` on the serial console.
 
-Join it from a phone and the setup page pops up (or browse to `http://192.168.4.1/`). Choose a network, enter its password, and the device saves it and restarts. If nothing is saved within 5 minutes, the portal restarts the device so it retries the saved network.
+Join it from a phone and the setup page pops up (or browse to `http://192.168.4.1/`). Choose a network and enter its password. You can also set:
+- **Admin password** for the dashboard (at least 8 characters). Until you set one, `DASHBOARD_PASSWORD` from `secrets.h` is used. The serial `E` command erases it and restores that default.
+- **HomeKit setup code** (8 digits, such as `123-45-678`), entered when adding the device in the Home app. The default is HomeSpan's `466-37-726`.
+
+Leave either one blank to keep the current value. The device saves everything and restarts. If nothing is saved within 5 minutes, the portal restarts the device so it retries the saved network.
 
 ### Dashboard
 On your home network, browse to `http://<device-ip>:8080/` and log in as `admin` with `DASHBOARD_PASSWORD` (HomeKit already uses port 80). The dashboard shows:
-- CAN link, humidity, target, temperature and run state (refreshed every 5 seconds)
+- CAN link, humidity, target, temperature and run state (refreshed every 2 seconds, `CAN_POLL_MS`)
 - pump state, with a **Pump out water** button to empty the condensate
 - Wi-Fi network, signal, IP address, uptime, free memory and firmware version
+- HomeKit pairing status, with a **Reset HomeKit pairing** button. It removes all pairings but keeps the device ID (and so its `HomeSpan-<ID>.local` name). Afterwards, delete the dehumidifier in the Home app and add it again.
+- **Factory reset** button: erases all saved data (Wi-Fi, HomeKit pairing and setup code, admin password, saved settings) and restarts into the setup network. The device gets a new HomeKit ID, so its `HomeSpan-<ID>.local` name changes. The OTA password is set from `OTA_PASSWORD` in `secrets.h` on every boot, so OTA keeps working.
 
 The dashboard uses HTTP basic auth over plain HTTP, so keep it on a trusted LAN.
 
@@ -160,7 +166,7 @@ The main application (`main.cpp`) implements three HomeKit services:
 
 3. **HumiditySensor**: Provides humidity readings from the dehumidifier
 
-The code polls the dehumidifier every 5 seconds to update status and environmental readings.
+The code reads the dehumidifier over CAN every 2 seconds (`CAN_POLL_MS`, or every 5 seconds while the link is down). HomeKit is updated from those readings every 5 seconds.
 
 ## Technical Details
 

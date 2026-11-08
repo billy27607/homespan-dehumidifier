@@ -11,6 +11,12 @@
 // ---- Firmware ----------------------------------------------------------------
 #define FW_VERSION "0.10.0"
 
+// ---- Dehumidifier polling ---------------------------------------------------
+// How often to read status over CAN. The dashboard refreshes at the same rate.
+#define CAN_POLL_MS 2000
+// Retry interval while the CAN link is down (each failed read blocks ~400ms).
+#define CAN_RETRY_MS 5000
+
 // ---- Setup access point / captive portal ------------------------------------
 // Join this network from a phone to configure Wi-Fi (password: AP_PASSWORD in secrets.h).
 #define AP_SSID "Dehumidifier-Setup"
